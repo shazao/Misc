@@ -34,7 +34,7 @@ void mySolution0() {
  * let f = 2 + six(x), a = 2 - six(x), then CPU utilization range will be [1/4, 3/4]. 
  * But the curve tends to be discrete because of the shrinked range. Let f = A + sin(x), 
  * a = B - six(x), range will be [(A-1)/(A+B), (A+1)/(A+B)]; When we want cu 
- * range to be [10%, 100%], the A = 1.22, B = 1. */
+ * range to be [10%, 100%], then A = 1.22, B = 1. */
 void mySolution1() {
   const float pi = 3.141592653;
   const int n = 3000;
