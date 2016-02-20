@@ -1,5 +1,6 @@
 #include "windows.h"
 #include <cmath>
+#include <ctime>
 #include <iostream>
 
 /* Method 0: Let for loop consume time f, Sleep consume time a(such as 5 ms);
@@ -34,27 +35,36 @@ void mySolution0() {
  * let f = 2 + six(x), a = 2 - six(x), then CPU utilization range will be [1/4, 3/4]. 
  * But the curve tends to be discrete because of the shrinked range. Let f = A + sin(x), 
  * a = B - six(x), range will be [(A-1)/(A+B), (A+1)/(A+B)]; When we want cu 
- * range to be [10%, 100%], then A = 1.22, B = 1. */
+ * range to be [10%, 100%], then A = 1.22, B = 1. If there's micro second sleep function
+ * in windows, the curve will be smoother. */
 void mySolution1() {
   const float pi = 3.141592653;
   const int n = 3000;
-  const int relative_frequency = 130;
   const int grain = 100;
+  int relative_frequency = 100;
 
-  double bt[n], it[n];    // Busy table, idle table.
+  double bt[n], it[n];          // Busy table, idle table.
   for (int i=0; i<n; ++i) {
     double radian = 2.0 * pi * i / n;
     bt[i] = 1.22 + sin(radian);
     it[i] = 1 - sin(radian);
   }
 
-  int i = 0;
+  int i = 0, pn = 0;            // Period count.
   while (1) {
     i %= n;
+    if (i < relative_frequency)
+      ++ pn;
     auto st = GetTickCount();   // Start time.
-    while (1000 * (GetTickCount() - st) < grain * 1000 * bt[i]) ;
+    while (GetTickCount() - st < grain * bt[i]) ;
     Sleep(grain * it[i]);
     i += relative_frequency;
+    if (pn > 5) {
+      i = 0;
+      pn = 0;
+      relative_frequency /= 2;
+    }
+    if (relative_frequency < 5) break;
   }
 }
 
