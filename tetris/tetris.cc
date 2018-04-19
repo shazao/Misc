@@ -28,8 +28,8 @@ class Tetris {
     class Block {
       public:
         static Block * getRandomBlock() { return new Block(rand() % n_block_); }
-        BlockStatus show(WINDOW * win, size_t row, size_t col, std::vector<std::vector<bool> > * bm = NULL, size_t * score = NULL, chtype c = CC);
         Block(Block * blk) { for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) bitmap_[i][j] = blk->bitmap_[i][j]; }
+        BlockStatus show(WINDOW * win, size_t row, size_t col, std::vector<std::vector<bool> > * bm = NULL, size_t * score = NULL, chtype c = CC);
         void rotateClockwise();
       private:
         Block(size_t idx = 0);
@@ -39,14 +39,7 @@ class Tetris {
     };
     void showNext(chtype c = CC) { next_->show(stdscr, 4, n_col_ + 2 + 1 + 1, NULL, NULL, c); }
     void updateScore() const { mvprintw((n_row_ >> 1) + 2, n_col_ + 2 + 1, "%d", score_); refresh(); }
-    void switchToNext() {
-      updateScore();
-      showNext(' ');                  // Make next vanish.
-      delete current_;
-      current_ = next_;
-      next_ = Block::getRandomBlock();
-      showNext();
-    }
+    void switchToNext();
   private:
     size_t n_row_;
     size_t n_col_;
@@ -58,6 +51,25 @@ class Tetris {
     static const size_t n_min_row_ = 7;             // For score and border display.
     static const size_t n_margin_col_ = 9 + 2 + 1;  // For score, border display and a space between them.
 };
+
+int main(int argc, const char * argv[]) {
+  size_t n_row = 0, n_col = 0;
+  if (argc >= 3) {
+    n_row = std::stoi(argv[1]);
+    n_col = std::stoi(argv[2]);
+  }
+  if (n_row == 0 || n_col == 0) {
+    printf("You didn't give me numbers of row or column of the game, \n\
+I'll show the largest to you.\nHit Enter to continue.\n");
+    getchar();
+  }
+
+  Tetris tetris(n_row, n_col);
+  if (!tetris.init()) { printf("Tetris initialization failed.\n"); return -1; }
+  if (!tetris.run()) tetris.gameOver();
+
+  return 0;
+}
 
 bool Tetris::init() {
   initscr();
@@ -105,29 +117,73 @@ bool Tetris::init() {
   return true;
 }
 
-Tetris::Block::Block(size_t idx) {
-  for (int i = 0; i < 4; ++i)
-    for (int j = 0; j < 4; ++j)
-      bitmap_[i][j] = 0;
-  switch (idx) {
-    case 0: bitmap_[0][0] = bitmap_[0][1] = bitmap_[0][2] = bitmap_[1][1] = 1; break;
-    case 1: bitmap_[0][1] = bitmap_[0][2] = bitmap_[1][0] = bitmap_[1][1] = 1; break;
-    case 2: bitmap_[0][0] = bitmap_[0][1] = bitmap_[1][1] = bitmap_[1][2] = 1;break;
-    case 3: bitmap_[0][1] = bitmap_[1][1] = bitmap_[2][1] = bitmap_[2][0] = 1;break;
-    case 4: bitmap_[0][0] = bitmap_[1][0] = bitmap_[2][0] = bitmap_[2][1] = 1;break;
-    case 5: bitmap_[0][0] = bitmap_[1][0] = bitmap_[2][0] = bitmap_[3][0] = 1;break;
-    case 6: bitmap_[0][0] = bitmap_[0][1] = bitmap_[1][0] = bitmap_[1][1] = 1;break;
-    default: mvprintw(1, 1, "Internal block error.\n"); refresh(); break;
+bool Tetris::run() {
+  // Init head position.
+  size_t hr0 = 0, hc0 = n_col_ >> 1;
+  size_t hr = hr0, hc = hc0;
+  while (1) {
+    // Show current Block at first.
+    BlockStatus status = current_->show(win_, hr, hc, &board_);
+    if (status == kGameOver) return false;
+    // Wait for down/left/right/up.
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(0, &rfds);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 300000;
+    int n_set = select(1, &rfds, 0, 0, &tv);
+    if (n_set == 0) {
+      if (status == kBottomReached || status == kBlockReached) {
+        current_->show(win_, hr, hc, &board_, &score_);
+        switchToNext();
+        hr = hr0; hc = hc0;
+      } else if (status == kBlockValid) {
+        // Displayed correctly.
+        current_->show(win_, hr, hc, NULL, NULL, ' ');   // Clear current block display.
+        ++ hr;
+      } else {
+        wprintw(win_, "%d", status);
+        wrefresh(win_);
+        assert(0);
+      }
+    } else if (n_set == 1) {
+      int ch = getch();
+      if (ch == KEY_LEFT || ch == KEY_RIGHT) {
+        if ((ch == KEY_LEFT && hc > 0) || (ch == KEY_RIGHT && hc < n_col_)) {
+          current_->show(win_, hr, hc, NULL, NULL, ' ');
+          BlockStatus bs = current_->show(win_, hr, ch == KEY_LEFT ? hc - 1 : hc + 1, &board_);
+          if (bs != kLrBorderOverlapped && bs != kBlockOverlapped)
+            ch == KEY_LEFT ? -- hc : ++ hc;
+        }
+      } else if (ch == KEY_UP) {
+        current_->show(win_, hr, hc, NULL, NULL, ' ');
+        Block * blk = new Block(current_);
+        blk->rotateClockwise();
+        BlockStatus bs = blk->show(win_, hr, hc, &board_);
+        if (bs != kLrBorderOverlapped && bs != kBottomOverlapped && bs != kBlockOverlapped) {
+          delete current_;
+          current_ = blk;
+        } else {
+          delete blk;
+        }
+      } else if (ch == KEY_DOWN) {
+        if (status == kBottomReached || status == kBlockReached) {
+          current_->show(win_, hr, hc, &board_, &score_);
+          switchToNext();
+          hr = hr0; hc = hc0;
+        } else {
+          current_->show(win_, hr, hc, NULL, NULL, ' ');
+          ++ hr;
+        }
+      } else if (ch == ' ') {
+        while (getch() != ' ');
+      }
+    } else {
+      printw("Internal timer error.\n");
+      return false;
+    }
   }
-}
-
-void Tetris::Block::rotateClockwise() {
-  for (int i = 0; i < 4; ++i)
-    for (int j = 0; j < 4 - i; ++j)
-      std::swap(bitmap_[i][j], bitmap_[3-j][3-i]);
-  for (int i = 0; i < 4 >> 1; ++i)
-    for (int j = 0; j < 4; ++j)
-      std::swap(bitmap_[i][j], bitmap_[3-i][j]);
 }
 
 // row and col are relative to win's start_y and start_x.
@@ -210,73 +266,13 @@ Tetris::BlockStatus Tetris::Block::show(WINDOW * win, size_t row, size_t col, st
   return bottom_reached ? kBottomReached : block_reached ? kBlockReached : kBlockValid;
 }
 
-bool Tetris::run() {
-  // Init head position.
-  size_t hr0 = 0, hc0 = n_col_ >> 1;
-  size_t hr = hr0, hc = hc0;
-  while (1) {
-    // Show current Block at first.
-    BlockStatus status = current_->show(win_, hr, hc, &board_);
-    if (status == kGameOver) return false;
-    // Wait for down/left/right/up.
-    fd_set rfds;
-    FD_ZERO(&rfds);
-    FD_SET(0, &rfds);
-    struct timeval tv;
-    tv.tv_sec = 0;
-    tv.tv_usec = 300000;
-    int n_set = select(1, &rfds, 0, 0, &tv);
-    if (n_set == 0) {
-      if (status == kBottomReached || status == kBlockReached) {
-        current_->show(win_, hr, hc, &board_, &score_);
-        switchToNext();
-        hr = hr0; hc = hc0;
-      } else if (status == kBlockValid) {
-        // Displayed correctly.
-        current_->show(win_, hr, hc, NULL, NULL, ' ');   // Clear current block display.
-        ++ hr;
-      } else {
-        wprintw(win_, "%d", status);
-        wrefresh(win_);
-        assert(0);
-      }
-    } else if (n_set == 1) {
-      int ch = getch();
-      if (ch == KEY_LEFT || ch == KEY_RIGHT) {
-        if ((ch == KEY_LEFT && hc > 0) || (ch == KEY_RIGHT && hc < n_col_)) {
-          current_->show(win_, hr, hc, NULL, NULL, ' ');
-          BlockStatus bs = current_->show(win_, hr, ch == KEY_LEFT ? hc - 1 : hc + 1, &board_);
-          if (bs != kLrBorderOverlapped && bs != kBlockOverlapped)
-            ch == KEY_LEFT ? -- hc : ++ hc;
-        }
-      } else if (ch == KEY_UP) {
-        current_->show(win_, hr, hc, NULL, NULL, ' ');
-        Block * blk = new Block(current_);
-        blk->rotateClockwise();
-        BlockStatus bs = blk->show(win_, hr, hc, &board_);
-        if (bs != kLrBorderOverlapped && bs != kBottomOverlapped && bs != kBlockOverlapped) {
-          delete current_;
-          current_ = blk;
-        } else {
-          delete blk;
-        }
-      } else if (ch == KEY_DOWN) {
-        if (status == kBottomReached || status == kBlockReached) {
-          current_->show(win_, hr, hc, &board_, &score_);
-          switchToNext();
-          hr = hr0; hc = hc0;
-        } else {
-          current_->show(win_, hr, hc, NULL, NULL, ' ');
-          ++ hr;
-        }
-      } else if (ch == ' ') {
-        while (getch() != ' ');
-      }
-    } else {
-      printw("Internal timer error.\n");
-      return false;
-    }
-  }
+void Tetris::switchToNext() {
+  updateScore();
+  showNext(' ');                  // Make next vanish.
+  delete current_;
+  current_ = next_;
+  next_ = Block::getRandomBlock();
+  showNext();
 }
 
 void Tetris::gameOver() {
@@ -291,24 +287,28 @@ void Tetris::gameOver() {
   }
 }
 
-int main(int argc, const char * argv[]) {
-  size_t n_row = 0, n_col = 0;
-  if (argc >= 3) {
-    n_row = std::stoi(argv[1]);
-    n_col = std::stoi(argv[2]);
+Tetris::Block::Block(size_t idx) {
+  for (int i = 0; i < 4; ++i)
+    for (int j = 0; j < 4; ++j)
+      bitmap_[i][j] = 0;
+  switch (idx) {
+    case 0: bitmap_[0][0] = bitmap_[0][1] = bitmap_[0][2] = bitmap_[1][1] = 1; break;
+    case 1: bitmap_[0][1] = bitmap_[0][2] = bitmap_[1][0] = bitmap_[1][1] = 1; break;
+    case 2: bitmap_[0][0] = bitmap_[0][1] = bitmap_[1][1] = bitmap_[1][2] = 1;break;
+    case 3: bitmap_[0][1] = bitmap_[1][1] = bitmap_[2][1] = bitmap_[2][0] = 1;break;
+    case 4: bitmap_[0][0] = bitmap_[1][0] = bitmap_[2][0] = bitmap_[2][1] = 1;break;
+    case 5: bitmap_[0][0] = bitmap_[1][0] = bitmap_[2][0] = bitmap_[3][0] = 1;break;
+    case 6: bitmap_[0][0] = bitmap_[0][1] = bitmap_[1][0] = bitmap_[1][1] = 1;break;
+    default: mvprintw(1, 1, "Internal block error.\n"); refresh(); break;
   }
-  if (n_row == 0 || n_col == 0) {
-    printf("You didn't give me numbers of row or column of the game, I'll show the largest to you.\nHit Enter to continue.\n");
-    getchar();
-  }
-
-  Tetris tetris(n_row, n_col);
-  if (!tetris.init()) {
-    printf("Tetris initialization failed.\n");
-    return -1;
-  }
-  if (!tetris.run())
-    tetris.gameOver();
-
-  return 0;
 }
+
+void Tetris::Block::rotateClockwise() {
+  for (int i = 0; i < 4; ++i)
+    for (int j = 0; j < 4 - i; ++j)
+      std::swap(bitmap_[i][j], bitmap_[3-j][3-i]);
+  for (int i = 0; i < 4 >> 1; ++i)
+    for (int j = 0; j < 4; ++j)
+      std::swap(bitmap_[i][j], bitmap_[3-i][j]);
+}
+
